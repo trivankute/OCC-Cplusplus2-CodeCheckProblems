@@ -1,64 +1,60 @@
-// include
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
-const db = new sqlite3.Database('./server/database.db');
 const cors = require('cors');
-// init server express
+const fs = require('fs/promises');
+const path = require('path');
+
 const app = express();
 app.use(cors());
-const port = 3000;
 
-db.run(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    count INTEGER DEFAULT 0
-  )
-`);
+const DB_FILE = path.join(__dirname, 'db.json');
+
+// Hàm đọc dữ liệu từ file db.json
+async function readData() {
+  try {
+    const content = await fs.readFile(DB_FILE, 'utf-8');
+    return JSON.parse(content);
+  } catch (err) {
+    // Nếu file chưa tồn tại, khởi tạo mặc định
+    return { users: {} };
+  }
+}
+
+// Hàm ghi dữ liệu vào file db.json
+async function writeData(data) {
+  await fs.writeFile(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+}
 
 
-app.get('/users', (req, res) => {
-    db.all('SELECT * FROM users', [], (err, rows) => {
-        if (err) {
-            console.error(err);
-            res.status(500).send('Internal Server Error');
-        } else {
-            res.json({count: rows.length, users: rows});
-        }
-    });
+// Route lấy toàn bộ danh sách users: GET /users
+app.get('/users', async (req, res) => {
+  try {
+    const data = await readData();
+    res.json(data.users);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read data' });
+  }
 });
 
-// get('/id') => { ... }
-app.get('/:id', (req, res) => {
-  const username = req.params.id;
+// Route tăng view cho user: GET /:id
+app.get('/:id', async (req, res) => {
+  const { id } = req.params;
 
-  // Nếu chưa có: tạo mới với count = 1
-  // Nếu đã có: tăng count lên 1
-  const sql = `
-    INSERT INTO users (id, count)
-    VALUES (?, 1)
-    ON CONFLICT(id) DO UPDATE SET count = users.count + 1
-  `;
+  // Bỏ qua request tự động favicon
+  if (id === 'favicon.ico') {
+    return res.status(204).end();
+  }
 
-  db.run(sql, [username], function (err) {
-    if (err) {
-      console.error(err.message);
-      return res.status(500).send('Database error');
-    }
+  try {
+    const data = await readData();
+    data.users[id] = (data.users[id] || 0) + 1;
+    await writeData(data);
 
-    // Lấy count hiện tại ra để phản hồi
-    db.get('SELECT count FROM users WHERE id = ?', [username], (err, row) => {
-      if (err) {
-        return res.status(500).send('Fetch error');
-      }
-        res.json({ id: username, count: row.count });
-    });
-  });
+    res.json({ id, count: data.users[id] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update user' });
+  }
 });
 
-app.get('/', (req, res) => {
-    res.send('Hello World!');
-});
-
-app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
-});
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
